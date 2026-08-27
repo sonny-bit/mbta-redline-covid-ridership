@@ -1,0 +1,518 @@
+---
+title: "Red Line Ridership Trends and the Impacts of COVID-19"
+author: "Sonny Mei"
+date: "last-modified"
+format: 
+  html: 
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    self-contained-math: true
+---
+
+## Setup
+
+If you have not installed the following packages, please install them before loading them.
+
+```{r packages}
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(here)
+library(scales)
+library(plotly)
+```
+
+```{r load-data}
+#| warning: false
+#| message: false
+
+# Read MBTA csv data
+mbta_monthly_ridership <- read_csv(here("data", "MBTA_Monthly_Ridership_By_Mode_and_Line.csv"))
+```
+
+## Background
+The Massachusetts Bay Transportation Authority (MBTA) is the public agency that runs trains, buses, and ferries in the Greater Boston area. This service includes the red line train, a transit that travels from Cambridge to Quincy or Dorchester depending on the destination.
+
+One research question requires background on COVID-19. COVID-19 is a contagious respiratory disease caused by the SARS-CoV-2 virus. It was a pandemic that impacted a shift from in-person to remote work. It lasted from March 2020 to May 2023. As such, the more people working from home, the less likely people would take the public transit to travel to work. One of the research questions will be exploring how COVID-19 has impacted the total ridership for the red line during the workweek between 2019 to 2025, which would provide info on pre-pandemic, during pandemic, and post-pandemic ridership data.
+
+
+## Dataset Description
+
+This project uses the [MBTA Monthly Ridership By Mode and Line](https://mbta-massdot.opendata.arcgis.com/datasets/2048258a18354256a650d41f8fe4532c_0/explore) dataset, published by Massachusetts geoDOT through the [MassDOT Open Data Portal](https://mbta-massdot.opendata.arcgis.com). The data is collected and maintained by the MBTA's Office of Performance Management & Innovation and is updated monthly.
+
+The code below confirms the size and date range of the raw file before any filtering is applied.
+
+```{r dataset-scope}
+# Confirm dimensions
+dim(mbta_monthly_ridership)
+
+# Check date range
+mbta_monthly_ridership |>
+  summarize(
+    earliest = min(month_of_service, na.rm = TRUE),
+    latest   = max(month_of_service, na.rm = TRUE)
+  )
+```
+
+The dataset contains 4,864 rows and 7 columns, spanning from July 2018 through May 2026. Each row represents the ridership for a specific transit line during a specific month and day type. The unit of observation is one transit line's ridership for one month and one day type (Weekday, Saturday, Sunday, or Total). 
+
+The seven columns are as follows: 
+
+- `month_of_service` records the month the data was collected
+- `daytype` indicates whether the row reflects Weekday, Saturday, Sunday, or Total ridership
+- `daycount` records the number of days within the given month
+- `route_or_line` identifies the transit line (e.g., Red Line, Orange Line, Bus)
+- `ridership_total` is the sum of all riders for that line, month, and day
+- `ridership_average` is the average number of daily riders for that combination
+- `ObjectId` is a unique row identifier assigned by the portal
+
+For this project, the dataset is filtered to Red Line observations only. This focus is personally motivated, as I commute on the Red Line daily and want to better understand ridership patterns on the line I rely on most. Descriptive statistics are calculated on `ridership_average` rather than `ridership_total` because monthly day counts vary, and averaging controls for this so that months are comparable on equal footing.
+
+As there is limited data in 2018 and 2026 in the dataset, this project will also filter the dataset to only years 2019 to 2025 to obtain the full 12 months of data for the targeted years.
+
+With the above filters in mind and focusing on **Weekday** ridership for the Red Line, the code below produces the headline statistics referenced in this section. The same filtering steps are walked through in more detail in the Exploratory Data Analysis section below.
+
+```{r intro-weekday-stats}
+mbta_monthly_ridership |>
+  mutate(month_of_service = as_date(ymd_hms(month_of_service))) |> # Convert col to date type
+  filter(
+    route_or_line == "Red Line",                # Red Line observations only
+    daytype == "Weekday",                       # Weekday commuter ridership only
+    year(month_of_service) >= 2019,             # Drop partial 2018
+    year(month_of_service) <= 2025              # Drop partial 2026
+  ) |>
+  summarize(
+    min    = min(ridership_average, na.rm = TRUE),
+    max    = max(ridership_average, na.rm = TRUE),
+    median = median(ridership_average, na.rm = TRUE),
+    mean   = mean(ridership_average, na.rm = TRUE),
+    sd     = sd(ridership_average, na.rm = TRUE)
+  )
+```
+
+Average weekday ridership ranges from a low of 19,744 to a high of 274,290, with a median of 125,208, a mean of 133,635, and a standard deviation of 61,537.
+
+Weekday ridership is highlighted here as it best reflects commuter behavior, which is the primary focus of Q1. Saturday and Sunday statistics are explored separately in the EDA section.
+
+The maximum average weekday ridership of 274,290 corresponds to October 2019, reflecting pre-COVID peak usage before the dramatic drop in 2020.
+
+The standard deviation is notably large, reflecting the decrease in ridership during the COVID-19 pandemic rather than routine variability. 
+
+The gap between the median and mean further illustrates this, where the mean is pulled upward by high-ridership months in the recovery period, while the median better represents what a typical pre- or post-COVID weekday looks like on the Red Line.
+
+## Exploratory Data Analysis
+
+Now that the scope of the raw file is confirmed, we tidy the data by removing totals and aggregated categories. We also filter out 2018 and 2026 since these years do not have the full 12 months of data.
+
+```{r}
+# Tidy the dataset
+mbta_monthly_ridership_tidy <- mbta_monthly_ridership |>
+  mutate(month_of_service = as_date(ymd_hms(month_of_service))) |>  # convert month_of_service to date
+  filter(daytype != "Total") |> # remove 'Total' rows
+  filter(!route_or_line %in% c("Heavy Rail", "Light Rail", "All Bus")) |> # Remove aggregate categories in route_or_line
+  filter(year(month_of_service) >= 2019 & year(month_of_service) <= 2025)  # keep only 2019-2025
+```
+
+We then filter to Red Line observations only and check the unique day types present.
+
+```{r filter-red-line}
+# Filter to only red line
+red_line <- mbta_monthly_ridership_tidy |>
+  filter(route_or_line == "Red Line")
+
+# Check unique day types
+red_line |> distinct(daytype)
+```
+
+The following table shows descriptive statistics for the key numeric columns in the Red Line dataset: `ridership_average`, `ridership_total`, and `daycount`.
+
+```{r descriptive-stats}
+# Define custom summary function for numeric columns
+summarise_num_col <- function(x) {
+  list(
+    min      = min(x, na.rm = TRUE),
+    max      = max(x, na.rm = TRUE),
+    range    = max(x, na.rm = TRUE) - min(x, na.rm = TRUE),
+    mean     = mean(x, na.rm = TRUE),
+    median   = median(x, na.rm = TRUE),
+    sd       = sd(x, na.rm = TRUE),
+    n_na     = sum(is.na(x)),
+    n_unique = n_distinct(x)
+  )
+}
+
+# Apply summary function to key numeric columns in the Red Line dataset
+red_line |>
+  select(c("ridership_average", "ridership_total", "daycount")) |> # Select only numeric columns of interest
+  sapply(summarise_num_col)
+```
+
+The `ridership_average` column ranges from a minimum of 10,597 to a maximum of 274,290 average daily riders, with a mean of 89,395 and a median of 75,797. The large gap between the mean and median, along with a standard deviation of 51,492, reflects how dramatically the COVID-19 pandemic pulled ridership down during 2020 and 2021, skewing the overall distribution. 
+
+The `ridership_total` column shows a similar pattern, ranging from 42,387 to 6,281,604 total monthly riders. The `daycount` column ranges from 3 to 23, reflecting variation in how many days of each type fall within a given month. No missing values were found in any of the three columns.
+
+We noticed an unusually high maximum value of 274,290 in `ridership_average`. The following code investigates which months produced the highest average ridership.
+
+```{r check-max}
+# Investigate the high max value on weekday
+red_line |>
+  filter(daytype == "Weekday") |>
+  arrange(desc(ridership_average)) |> # Sort from highest to lowest ridership avg.
+  head(5) # Choose the top 5 rows of data
+```
+
+Notably, the highest ridership months cluster around September and October, suggesting a fall seasonal peak that will be explored further in the research question analysis. The maximum of 274,290 corresponds to October 2019, the pre-COVID peak before the dramatic ridership drop in 2020.
+
+We also check for missing values in the key numeric columns.
+
+```{r missing-values}
+# Check for na values
+red_line |>
+  summarize(
+    na_ridership_total   = sum(is.na(ridership_total)),
+    na_ridership_average = sum(is.na(ridership_average)),
+    na_month             = sum(is.na(month_of_service))
+  )
+```
+
+No NA values were found in the dataset, which is consistent with the `n_na` values of 0 returned by the custom summary function above.
+
+Lastly, we can double check outliers. We will identify outliers using a box plot to display the average number of riders in each month from 2019 to 2025.
+
+```{r}
+#| fig-alt: >
+#|    A box plot displaying the avg number of riders in each month from 2019 to 2025 in RedLine.
+#| fig-cap: "Data sourced from the MBTA Open Data Portal"
+red_line |>
+  filter(daytype == "Weekday") |> # Filter to only weekdays
+  mutate(
+    month_of_service = as_date(month_of_service), # Convert col to date type
+    month_label = month(month_of_service, label = TRUE, abbr = TRUE) # Grab only the month. Keep month as name instead of int values and also abbreviate the months
+  ) |>
+  ggplot(aes(x = month_label, y = ridership_average)) + # Target variables for plot
+  geom_boxplot() + # Select plot
+  scale_y_continuous(labels = scales::comma) + # Output y value with full integer instead of e+5
+  labs(
+    title = "Red Line Weekday Ridership Distribution by Month",
+    subtitle = "October carries the highest median, while the lowest outliers fall in the 2020 lockdown months",
+    x = "Month",
+    y = "Average Daily Riders",
+  ) + # Label the plot
+  theme_minimal()
+```
+
+In the plot, we notice some very low outliers from March to June and August to December. The most extreme low outliers appear in April and May, which likely correspond to the height of the COVID lockdowns in 2020. March also shows a lower outlier, which may reflect the very start of the pandemic when restrictions first took effect.
+
+The upper outliers, which appear from March to December, have a straightforward explanation. As the top five table above shows, the highest weekday months in the dataset all fall in 2019 and early 2020. Because this box plot pools all seven years into each monthly box, those pre-pandemic months sit far above the COVID and recovery years grouped alongside them and are flagged as outliers as a result.
+
+Overall, October has the highest median for average daily riders on the Red Line. There are likely several reasons for this, but one explanation is that college students are fully settled into the fall semester by October and are using the Red Line more frequently. There are also no holidays or academic breaks in October, whereas spring breaks in March and April may explain the slight dip in ridership during those months.
+
+With that in mind, the outliers were kept in the dataset. Some correspond to COVID lockdown months and others to pre-COVID peaks, both of which are central to analyzing the impacts of COVID-19 on Red Line ridership.
+
+## Literature Review
+
+The COVID-19 pandemic caused a decrease in public transit ridership nationally. According to a 2024 report by the Federal Transit Administration, transit ridership decreased 81% between April 2019 and April 2020, with 97% of the 518 agencies studied reporting significant ridership losses ([Federal Transit Administration, 2024](https://www.transit.dot.gov/sites/fta.dot.gov/files/2024-08/FTA-Report-0268-Effects-of-the-COVID-19-Pandemic-on-Transit-Ridership-and-Accessibility.pdf)). This national context frames the Red Line ridership decrease visible in this dataset and motivates Q1's focus on the trajectory and degree of recovery since 2020.
+
+At the local level, the MBTA's recovery has been uneven. Data from the TransitMatters MBTA Covid Recovery Dashboard, which tracks ridership and service levels in real time, shows the MBTA system currently operating at 74% of pre-pandemic weekday ridership despite running at 92% of pre-pandemic service levels ([TransitMatters Labs, 2026](https://recovery.transitmatters.org/)). This gap between service restoration and ridership recovery suggests that factors beyond service availability, such as the rise of remote work and shifting commuter habits, are shaping current ridership patterns on lines like the Red Line.
+
+For Q2, research on seasonal transit ridership patterns provides useful framing. [Kashfi, Bunker, and Yigitcanlar (2015)](https://doi.org/10.1016/j.jtrangeo.2015.05.008) found that transit ridership is better explained by academic and institutional calendars than by simple calendar seasons alone, with ridership peaking during university semester shoulder periods and dropping during holiday and recess periods. This is particularly relevant for the Red Line, which serves major universities including MIT and Harvard, and may therefore exhibit stronger fall ridership peaks tied to the academic year rather than weather patterns alone.
+
+## Research Questions
+
+Building on the literature above, this project explores two focused research questions about Red Line ridership patterns using the MBTA Monthly Ridership By Mode and Line dataset. The first takes up the national and local recovery gap described by the Federal Transit Administration and TransitMatters, and the second tests whether the academic-calendar seasonality Kashfi and colleagues identified appears on the Red Line.
+
+**Q1: How did COVID-19 affect Red Line ridership, and how has it recovered?**
+
+The COVID-19 pandemic caused a reduction in public transit ridership across the United States. The MBTA was no exception, with ridership decreasing in 2020. This question examines the trajectory of Red Line ridership from 2019 through 2025, but we will be carefully examining pre-COVID, effects of COVID during March 2020 to May 2023, and post-COVID recovery.
+
+Weekday and weekend ridership are examined separately, since public transit weekday ridership and leisure-driven weekend ridership may have recovered at different rates due to the rise of remote work.
+
+This question contains the following sub-questions:
+
+- How severe was the ridership drop in 2020 relative to the pre-COVID baseline?
+- Has ridership fully recovered by 2025?
+- Is the COVID-19 impact pattern similar across day types (Weekday vs. Saturday vs. Sunday)?
+
+**Q2: What seasonal patterns exist in Red Line ridership during the post-COVID recovery period (2022-2025), and are those patterns consistent across years?**
+
+Beyond the COVID disruption, transit ridership is known to fluctuate seasonally. Factors such as university calendars, summer travel, winter weather, and holiday periods may all contribute to recurring monthly patterns. This question examines whether the Red Line shows consistent seasonal trends across years, and whether those patterns hold up across all day types or differ between weekday and weekend ridership. 
+
+The EDA already suggests a fall peak in September and October, which this analysis will explore more thoroughly.
+
+The post-COVID recovery period (2022-2025) is the focus for this question because Q1 already examines the full COVID impact across all years. Isolating 2022-2025 allows us to examine what seasonal patterns look like now that ridership has partially stabilized, without the COVID disruption distorting the seasonal shape.
+
+## Research Question Analysis
+
+### Q1: How did COVID-19 affect Red Line ridership, and how has it recovered?
+
+```{r}
+# Prepare data: parse date and filter to weekday + weekend separately
+red_line_time <- red_line |>
+  mutate(
+    month_of_service = as_date(month_of_service), # Convert col to date type
+    daytype = factor(daytype, levels = c("Weekday", "Saturday", "Sunday")) # Apply factor levels for day types
+  )
+```
+
+```{r}
+#| warning: false
+#| fig-alt: "Line chart showing MBTA Red Line average daily ridership from 2019
+#|   to 2025, faceted by day type (Weekday, Saturday, Sunday). All three panels
+#|   show a sharp drop in early 2020 due to COVID-19, followed by a gradual
+#|   recovery that has not yet returned to pre-pandemic levels for weekdays."
+#| fig-cap: "Data sourced from the MBTA Open Data Portal"
+
+# Q1 Visualization: ridership over time faceted by day type
+ggplot(red_line_time, aes(x = month_of_service, y = ridership_average)) + # Select col for x and y axis
+  # Apply vline to display the 'dip' due to COVID-19
+  geom_vline(xintercept = as_date("2020-03-01"),  
+           linetype = "dashed", 
+           color = "gray", 
+           linewidth = 0.5) +
+  geom_line(color = "red", linewidth = 0.8) + # Choose line plot
+  # Apply LOESS to visually see the trend overtime
+  geom_smooth(method = "loess", se = TRUE, color = "blue", 
+              fill = "blue", alpha = 0.15) +
+  facet_wrap(~ daytype, # Split the 3 different daytypes to their own plots
+             ncol = 1, # Stack plots vertically
+             scales = "free_y") + # Give each plot its own y-axis
+  # Graph x-axis in 1 year intervals
+  scale_x_date(
+    date_breaks = "1 year",
+    date_labels = "%Y"
+  ) +
+  scale_y_continuous(labels = scales::comma) + # List y value fully, not with e+ notations
+  labs(
+    title = "MBTA Red Line Average Daily Ridership (2019-2025)",
+    subtitle = "Weekend ridership climbed back toward pre-COVID lvls while weekdays remain below them",
+    x = "Year",
+    y = "Average Daily Riders"
+  ) + # Add title and labels
+  theme_minimal()
+```
+
+The chart above tracks average daily Red Line ridership from January 2019 through December 2025, separated by day type. The most notable observation is the sharp dip in early 2020 across all three panels, which corresponds to the start of the COVID-19 pandemic and the MBTA's shift to reduced service in March of that year. At its lowest point, weekday ridership dropped to roughly 20,000 average daily riders, a very small fraction of the pre-pandemic peak of approximately 270,000 in October 2019.
+
+The recovery trajectory differs based on day type. Weekday ridership has recovered gradually but remains well below pre-COVID levels as of 2025, with the LOESS trend line leveling off at around 140,000 to 160,000 average daily riders. For context, the [TransitMatters MBTA Covid Recovery Dashboard](https://recovery.transitmatters.org/) reports the MBTA operating at 74% of pre-pandemic weekday ridership while running 92% of pre-pandemic service. Red Line weekday ridership in this dataset sits below that system-wide figure, which is expected given that the system-wide number blends the subway with bus and commuter rail. Both have recovered more completely than the subway, with bus ridership holding near 80% of its pre-pandemic baseline in part because bus riders are less likely to hold jobs that can be performed remotely ([Boston Globe, 2025](https://www.bostonglobe.com/2025/10/20/metro/mbta-subway-commute-office-boston/)). The Red Line, which carries a larger share of downtown office commuters, is the segment most exposed to that shift. In either case, the gap between service restored and riders returned points toward behavioral change rather than service availability, specifically the rise of hybrid and remote work.
+
+Weekend ridership tells a different story. Both Saturday and Sunday panels show a stronger recovery than weekdays, with the trend lines approaching pre-COVID levels by 2025. Saturday ridership recovered to approximately 79,000 average daily riders by 2023-2025, compared to a pre-COVID average of around 113,000, while Sunday recovered to roughly 61,000 from a pre-COVID average of about 86,500. This stronger recovery makes sense since weekend trips are primarily leisure-driven and are less affected by remote work patterns. The implication is that the Red Line's ridership base is shifting, with weekends making up a larger share of overall ridership relative to weekday commuting than before the pandemic.
+
+### Q2: What seasonal patterns exist in Red Line ridership during the post-COVID recovery period (2022-2025), and are those patterns consistent across years?
+
+```{r}
+red_line_seasonal <- red_line |>
+  filter(year(month_of_service) >= 2022) |> # Select only years post-COVID
+  mutate(
+    month_label = month(month_of_service, label = TRUE, abbr = TRUE), # Grab only the month. Keep month as name instead of int values and also abbreviate the months
+    daytype = factor(daytype, levels = c("Weekday", "Saturday", "Sunday")) # Factor levels for each daytype
+  ) |>
+  group_by(month_label, daytype) |> # Group by month and day type to calculate averages across years
+  summarize(avg_riders = mean(ridership_average, na.rm = TRUE), # Average ridership for each month and day type
+            .groups = "drop") # Drop grouping to not affected data later
+```
+
+
+```{r}
+#| fig-alt: "Line chart showing average daily Red Line ridership by month for 
+#|   the post-COVID recovery period (2022-2025), with separate lines for 
+#|   Weekday, Saturday, and Sunday. Weekday ridership is highest across all 
+#|   months, peaking in October at roughly 150,000 riders and dipping in 
+#|   January to around 110,000. Saturday and Sunday follow a similar October 
+#|   peak pattern but at lower overall levels, with Sunday being the lowest 
+#|   of the three day types. All three day types show a noticeable dip in 
+#|   July and December."
+#| fig-cap: "Data sourced from the MBTA Open Data Portal"
+
+red_line_seasonal |>
+  ggplot(aes(x = month_label, y = avg_riders, # Select col for x and y axis
+             group = daytype, # Group plots by day type to display different trends
+             color = daytype)) + # Color the day types
+  geom_line() + # Choose line plot
+  geom_point() + # Add points
+  scale_y_continuous(labels = scales::comma) + # Display full value instead of e+ notation
+  labs(
+    title = "Red Line Average Daily Ridership by Month (2022-2025) Post-COVID",
+    subtitle = "Every day type peaks in October and bottoms out in January, with a secondary dip in July",
+    x = "Month",
+    y = "Average Daily Riders",
+    color = "Day Type",
+  ) + # Add title, axis labels, and legend
+  theme_minimal()
+```
+
+The chart shows average daily Red Line ridership by month during the post-COVID recovery period (2022-2025), separated by day type. All three lines follow a similar seasonal shape.
+
+October is the peak month on average, with weekday ridership reaching roughly 150,000 average daily riders at its highest. This fall peak is consistent with [Kashfi, Bunker, and Yigitcanlar (2015)](https://doi.org/10.1016/j.jtrangeo.2015.05.008), who found that transit ridership peaks during active university semester periods rather than simple calendar seasons. The Red Line serves MIT and Harvard directly, and October sits at the height of the fall semester with no breaks or holidays interrupting regular commuting patterns.
+
+January and December are the lowest months across all day types, likely due to the holiday season and the post-holiday slowdown in early January. July also shows a noticeable dip, especially for Saturday and Sunday ridership, which may reflect summer vacation travel patterns where Boston residents leave the city rather than using local transit.
+
+The gap between January and October on weekdays is around 40,000 riders, while Saturday and Sunday show similar patterns of lower ridership in winter months and a clear uptick in October.
+
+The chart below breaks the same post-COVID period out by year rather than averaging across it, which lets us test whether the seasonal shape actually repeats or whether the pooled average was hiding year-to-year differences.
+
+```{r}
+#| fig-alt: "Line chart of Red Line average daily ridership by month, with a separate line for each year from 2022 to 2025, faceted by day type. All four years trace a similar shape within each panel, with a peak in October and lows in January and December, while the lines sit progressively higher in later years as ridership recovers."
+#| fig-cap: "Data sourced from the MBTA Open Data Portal"
+
+red_line_by_year <- red_line |>
+  filter(year(month_of_service) >= 2022) |>          # post-COVID period only
+  mutate(
+    ride_year = factor(year(month_of_service)),      # year as a factor for coloring
+    month_label = month(month_of_service, label = TRUE, abbr = TRUE),
+    daytype = factor(daytype, levels = c("Weekday", "Saturday", "Sunday"))
+  )
+
+ggplot(red_line_by_year, 
+       aes(x = month_label, y = ridership_average, 
+           group = ride_year, color = ride_year)) + # Target variables for plot
+  geom_line(linewidth = 0.7) + # Target line plot
+  geom_point(size = 1.2) + # Add points on plot
+  facet_wrap(~ daytype, ncol = 1, scales = "free_y") +  # each day type gets its own scale
+  scale_y_continuous(labels = scales::comma) + # No e+ notations
+  labs(
+    title = "Red Line Seasonal Pattern Repeats Each Year (2022-2025)",
+    subtitle = "Each year traces the same shape at a higher level, with fall 2023 the notable exception",
+    x = "Month",
+    y = "Average Daily Riders",
+    color = "Year"
+  ) + # Add title, labels, and legend
+  theme_minimal()
+```
+
+The shape does repeat. In all three day types, ridership climbs through the spring, dips in July, rises again through September and October, and falls off sharply in November and December. Every year traces roughly the same path, just at different heights. This is the strongest evidence in the project for a genuine seasonal cycle rather than a pattern created by averaging.
+
+The static chart above is dense, so the version below makes the weekday panel interactive. Hovering over any point reveals the exact ridership figure for that month and year, and clicking a year in the legend hides or isolates it, which makes the year-over-year comparisons easier to read directly off the chart.
+
+```{r}
+#| fig-alt: "Interactive line chart of Red Line weekday average daily ridership by month, with one line per year from 2022 to 2025. Hovering displays the exact value for each month and year, and legend entries toggle individual years."
+#| fig-cap: "Data sourced from the MBTA Open Data Portal. Hover for values, click legend entries to toggle years."
+
+weekday_by_year_plot <- red_line_by_year |>
+  filter(daytype == "Weekday") |> # Weekday only to keep the interactive chart readable
+  ggplot(aes(x = month_label, y = ridership_average,
+             group = ride_year, color = ride_year)) +
+  geom_line(linewidth = 0.7) +
+  geom_point(size = 1.2) +
+  scale_y_continuous(labels = scales::comma) +
+  labs(
+    title = "Red Line Weekday Ridership by Month and Year (2022-2025)",
+    x = "Month",
+    y = "Average Daily Riders",
+    color = "Year"
+  ) +
+  theme_minimal()
+
+# Convert the ggplot into an interactive chart
+ggplotly(weekday_by_year_plot)
+```
+
+```{r}
+# Identify the peak and lowest weekday ridership month within each year
+red_line_by_year |>
+  filter(daytype == "Weekday") |> # Target only weekdays
+  group_by(ride_year) |> # Group by year
+  # Obtain statistics for each year
+  summarize(
+    peak_month  = month_label[which.max(ridership_average)],  # highest month that year
+    peak_riders = max(ridership_average),
+    low_month   = month_label[which.min(ridership_average)],  # lowest month that year
+    low_riders  = min(ridership_average),
+    .groups = "drop"
+  )
+```
+
+The table above confirms this for weekday ridership. Three of the four years peak in October, and 2023 peaks in September, so all four peak during the active fall semester rather than in a calendar season such as summer. This directly supports [Kashfi, Bunker, and Yigitcanlar (2015)](https://doi.org/10.1016/j.jtrangeo.2015.05.008), who found that transit ridership tracks academic and institutional calendars more closely than weather. The Red Line serves MIT and Harvard, and the fall peak lands squarely in the middle of the semester with no extended breaks. The low months are less uniform but point the same direction. January is the lowest month in 2022 and 2025, December in 2023, and July in 2024, meaning the annual low falls during either the winter holiday period or the summer recess in every year observed.
+
+What the pooled chart concealed is that recovery has not been steady. If ridership were simply climbing year over year, the four lines would stack neatly from 2022 to 2025. They do not. The 2025 line sits above the others for most of the year, but 2023 falls below 2022 throughout the fall, with an October weekday average of roughly 122,000 compared to 140,942 in October 2022. In other words, weekday ridership in fall 2023 was lower than it had been a year earlier. Service conditions offer a plausible explanation. The Red Line carried more than 100 speed restrictions covering roughly 14 miles of track, close to a third of its length, as of October 2023 ([Streetsblog Massachusetts, 2024](https://mass.streetsblog.org/2024/11/25/mbta-eliminates-slow-zones-from-the-red-line)), and the MBTA fully closed the Ashmont branch between JFK/UMass and Ashmont from October 14 through October 29 of that year, replacing service for roughly 40,000 daily riders with shuttle buses ([Bay State Banner, 2023](https://baystatebanner.com/2023/09/06/mbta-red-and-mattapan-lines-to-close-for-repairs-in-oct)). A 16-day branch closure in the middle of the month is a strong candidate for the depressed October 2023 figure. Even so, this dataset alone cannot confirm the link. As noted in the limitations section, ridership figures cannot distinguish a drop in demand from a drop in service availability, and establishing that connection formally would require joining these counts to MBTA diversion and performance records.
+
+The 2022 line is also revealing. January 2022 weekday ridership was 85,496, far below any other month in the series, and by October it had reached 140,942. That within-year swing of more than 55,000 riders lines up closely with the Omicron surge and the return to normal activity that followed. The Omicron wave crested in Massachusetts in the first half of January 2022, with regional wastewater levels peaking on January 5 and the statewide seven-day average of new infections peaking on January 8 before dropping sharply through the rest of the month ([Cambridge Public Health Department, 2022](https://www.cambridgema.gov/covid19/News/2022/01/omicroncaseshavepeaked)). The ridership low therefore falls in the same month as the infection peak, which supports the decision made in the deep-dive analysis to exclude 2022 from the recovery baseline. The year is not a stable point of comparison because it contains both the tail end of the disruption and a near-full recovery.
+
+By contrast, 2025 ranges from 127,316 in January to 164,041 in October, a swing of about 37,000. The gap between the annual high and low is narrowing over time, which suggests that ridership is settling into a more predictable seasonal rhythm as the COVID disruption recedes.
+
+Weekend ridership follows the same broad shape but less reliably. Saturday ridership in July 2024 rises rather than falls, breaking the summer dip visible in the other years and day types. Because weekend travel is leisure-driven, it is more sensitive to one-off factors such as weather, holiday weekends, and events, so weekend seasonality is looser than weekday seasonality.
+
+One limitation applies to this entire analysis. The seasonal cycle and the overall recovery trend are moving at the same time, so a rising October figure could reflect seasonality, continued recovery, or both. Separating the two would require indexing each month against its own year's average, which is beyond the descriptive scope of this project but would be a natural next step.
+
+## Deep-Dive Analysis
+
+To go beyond the visual trend from Q1, the table below calculates the average ridership for each day type across three periods: Pre-COVID (2019), COVID (2020-2021), and Recovery (2023-2025). 2022 was excluded because it was still a transitional year where ridership was highly volatile and not yet representative of stable recovery patterns, which would skew the recovery averages.
+
+```{r}
+# Quantify the severity of COVID drop and degree of recovery by day type
+red_line |>
+  mutate(
+    year = year(month_of_service),
+    period = case_when(
+      year == 2019 ~ "PreCOVID",          # Use 2019 as the pre-COVID baseline
+      year %in% c(2020, 2021) ~ "COVID",  # COVID period covers full disruption years
+      year %in% c(2023, 2024, 2025) ~ "Recovery" # Recovery excludes 2022 as a transitional year
+    )
+  ) |>
+  filter(!is.na(period)) |> # Remove rows not assigned to a period (e.g. 2022)
+  group_by(daytype, period) |> # Group data by day type and COVID period
+  summarize(avg_ridership = mean(ridership_average, na.rm = TRUE), # Apply average on group data
+            .groups = "drop") |> # Drop grouping to not affect data downstream
+  pivot_wider(names_from = period, values_from = avg_ridership) |> # Apply pivot wider to flatten percentage data
+  mutate(
+    pct_drop = round((COVID - PreCOVID) / PreCOVID * 100, 1),       # % change from pre-COVID to COVID low
+    pct_recovery = round((Recovery - COVID) / (PreCOVID - COVID) * 100, 1) # % of lost ridership regained
+  )
+```
+
+Two additional metrics are derived: the percentage drop from pre-COVID to the COVID period, and the percentage of lost ridership that has since been recovered.
+
+The results reveal a similar pattern in the drop across all day types during COVID. Saturday dropped 53.8%, Sunday dropped 53.7%, and weekday dropped 65.1%. Weekdays saw the steepest decline, likely because office commuting essentially ceased during lockdowns while some leisure and essential travel continued on weekends.
+
+However, the recovery picture is dramatically different. Saturday and Sunday ridership have each recovered roughly 44% of the ridership lost during COVID, while weekday ridership has only recovered 24.2%. This means that despite weekdays historically carrying the most riders, they are recovering at roughly half the rate of weekend ridership.
+
+This asymmetry strongly suggests that the cause of incomplete weekday recovery is behavioral rather than operational. The MBTA has restored 92% of pre-pandemic service levels according to the [TransitMatters Recovery Dashboard](https://recovery.transitmatters.org/), meaning trains are running, but riders are not returning at the same rate. The most likely explanation is the shift toward hybrid and remote work, which has permanently reduced the number of people commuting to work on weekdays. Weekend ridership, being primarily leisure-driven, is not affected by this shift and is recovering more naturally as social activity returns to pre-pandemic norms.
+
+In practical terms, this finding suggests the Red Line's pre-COVID ridership baseline of roughly 250,000 average weekday riders may no longer be a realistic target. The 2023-2025 weekday average of approximately 127,000 riders sits at roughly half that baseline. It would be premature to call this a permanent new normal, however, since the by-year comparison in Q2 shows 2025 running above every prior recovery year in nearly every month. Weekday ridership is still climbing rather than flat. What the asymmetry does suggest is that closing the remaining gap would require a reversal of the remote work patterns that have held steady since 2020, rather than further service restoration alone.
+
+## Critical Reflection & Data Ethics
+
+### What I Learned
+
+This project shows that even with a simple dataset, it can tell a rich story when explored carefully. The MBTA Monthly Ridership By Mode and Line dataset has only seven columns, but by filtering, grouping, and visualizing thoughtfully, it revealed meaningful patterns about how the Red Line has changed over nearly a decade. Weekday and weekend ridership have followed different trajectories post-COVID after 2022, which reflects real behavioral changes in how people use public transit. That distinction would have been invisible if I had only looked at total ridership without separating by day type.
+
+### Limitations of the Dataset
+
+This dataset answers some questions well but others are left unanswerable.
+
+The data is aggregated to the line level, meaning analysis on individual station patterns are not visible. Whether Wollaston or Quincy Center ridership recovered differently from Central Square or Harvard cannot be determined from this dataset alone. A future analysis merging this data with the MBTA Gated Station Entries dataset would address this gap.
+
+The dataset measures ridership but says nothing about service quality. A month with 140,000 average daily weekday riders could reflect a month of smooth, reliable service or a month plagued by signal failures and delays. The ridership number alone cannot distinguish between the two. Answering questions about whether service reliability has improved would require a separate performance dataset such as the MBTA Rapid Transit Headways data.
+
+Finally, ridership averages smooth over disruptions. A single month with a major derailment or service suspension would appear in the data as a slightly lower average rather than as a discrete event. Connecting ridership dips to specific incidents would require cross-referencing with MBTA incident records.
+
+### Data Ethics
+
+Transit ridership data carries ethical dimensions that are worth acknowledging explicitly.
+
+**Who is counted and how:** Gated station entries and ridership figures count fare transactions, not people. Riders who evade fares, use free transfers, or access stations through unstaffed entrances may be undercounted. This means ridership data may systematically underrepresent certain rider populations, particularly those in lower-income communities where fare evasion rates tend to be higher due to financial hardship.
+
+**How the data is used:** Ridership figures are a primary input into MBTA service planning and resource allocation decisions. Lines and stations with higher ridership tend to receive more investment and more frequent service. This creates a feedback loop where lower-ridership stations (which may serve transit-dependent communities with fewer transportation alternatives) receive less service, which further suppresses ridership, which in turn justifies continued underinvestment. Analyzing ridership data without acknowledging this dynamic risks reinforcing existing inequities rather than surfacing them.
+
+**Privacy:** The dataset used in this project is aggregated and contains no personally identifiable information, which limits privacy concerns at this level of analysis. However, more granular transit data (such as individual fare card transaction logs) could in principle be used to reconstruct detailed movement patterns for individual riders. The MBTA's use of CharlieCard data for operational purposes raises questions about data retention, access, and the potential for surveillance that aggregate datasets like this one do not resolve.
+
+**Transparency and access:** One strength of this dataset is that it is publicly available through the MassDOT Open Data Portal under an open license. This supports public accountability and allows riders, researchers, and advocates to independently evaluate MBTA performance claims. That transparency is meaningful and worth acknowledging as a positive ethical practice by the agency.
+
+### References
+
+Bay State Banner. (2023, September 6). [*MBTA Red and Mattapan lines to close for repairs in Oct.*](https://baystatebanner.com/2023/09/06/mbta-red-and-mattapan-lines-to-close-for-repairs-in-oct)
+
+Boston Globe. (2025, October 20). [*MBTA ridership took a nosedive during the pandemic. Will it ever fully recover?*](https://www.bostonglobe.com/2025/10/20/metro/mbta-subway-commute-office-boston/) The Boston Globe.
+
+Cambridge Public Health Department. (2022, January 26). [*Omicron cases have peaked in Cambridge; residents urged to continue to take precautions to slow the spread.*](https://www.cambridgema.gov/covid19/News/2022/01/omicroncaseshavepeaked) City of Cambridge.
+
+Federal Transit Administration. (2024). [*Effects of the COVID-19 pandemic on transit ridership and accessibility*](https://www.transit.dot.gov/sites/fta.dot.gov/files/2024-08/FTA-Report-0268-Effects-of-the-COVID-19-Pandemic-on-Transit-Ridership-and-Accessibility.pdf) (FTA Report No. 0268). U.S. Department of Transportation.
+
+Kashfi, S. A., Bunker, J. M., & Yigitcanlar, T. (2015). [*Understanding the effects of complex seasonality on suburban daily transit ridership.*](https://doi.org/10.1016/j.jtrangeo.2015.05.008) Journal of Transport Geography, 46, 67–80.
+
+Massachusetts geoDOT. (2025). [*MBTA Monthly Ridership By Mode and Line*](https://mbta-massdot.opendata.arcgis.com/datasets/2048258a18354256a650d41f8fe4532c_0/explore). MassDOT Open Data Portal.
+
+Streetsblog Massachusetts. (2024, November 25). [*MBTA eliminates slow zones from the Red Line.*](https://mass.streetsblog.org/2024/11/25/mbta-eliminates-slow-zones-from-the-red-line)
+
+TransitMatters Labs. (2026). [*MBTA Covid Recovery Dashboard*](https://recovery.transitmatters.org/).
