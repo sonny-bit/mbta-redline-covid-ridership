@@ -22,7 +22,7 @@ The pre-COVID weekday baseline of roughly 250,000 average daily riders may no lo
 
 [MBTA Monthly Ridership by Mode and Line](https://mbta-massdot.opendata.arcgis.com/datasets/2048258a18354256a650d41f8fe4532c_0/explore), published by Massachusetts geoDOT through the MassDOT Open Data Portal and maintained by the MBTA's Office of Performance Management & Innovation.
 
-4,864 rows covering July 2018 through May 2026, filtered here to Red Line observations for 2019 to 2025 (the years with complete twelve-month coverage). The snapshot in `data/` was retrieved on RETRIEVAL-DATE and is committed to the repository deliberately: the portal updates monthly, so a fresh download will not reproduce these figures exactly.
+4,864 rows covering July 2018 through May 2026, filtered here to Red Line observations for 2019 to 2025 (the years with complete twelve-month coverage). The snapshot in `data/` was retrieved on August 15, 2026 and is committed to the repository deliberately: the portal updates monthly, so a fresh download will not reproduce these figures exactly.
 
 ## What's in this repo
 
